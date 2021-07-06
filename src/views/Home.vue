@@ -1,15 +1,20 @@
 <template>
-  <div class="home" :style="{height:winHeight}" ref="home">
+  <div class="home" ref="home">
     <audio autoplay="true" loop ref="music" src="http://tm.lilanz.com/QYWX/Test/LMTest/assets/music/music_bg.mp3"></audio>
     <van-swipe style="height: 100%;" vertical :show-indicators="false" :loop="false">
       <van-swipe-item>
         <img :class="rate?'imgH':'imgW'" ref="homePage" v-lazy="$assetsSrc+'bg.png'">
         <!-- 第一页的输入名字区 -->
         <div class="edit" ref="edit" :style="editStyle">
-          <div class="inp_edit">
+          <div class="inp_edit" v-if="!isShare">
             <p>送呈</p>
-            <input @focus="focusInp" @blur="blurInp" type="text" placeholder="输入宾客姓名" v-model="userName">
+            <input type="text" placeholder="输入宾客姓名" v-model="userName">
             <button @click="sure">生成请帖</button>
+          </div>
+          <div class="name_edit" v-else>
+            <p>送呈</p>
+            <h2>{{userName}}</h2>
+            <p class="text_right">台启</p>
           </div>
         </div>
       </van-swipe-item>
@@ -42,7 +47,6 @@
   </div>
 </template>
 
-
 <script>
 export default {
   name: "Home",
@@ -50,16 +54,18 @@ export default {
     this.getscale();
     this.getImgHeight();
     this.audioPlay();
-    this.userName = document.documentElement.clientHeight;
+    this.getWXInfo();
+    if (this.getUrlString("userName")) {
+      //检测出当前界面是收件人的界面
+      this.userName = this.getUrlString("userName");
+      this.isShare = true;
+    }
+    // 解决页面因为输入框软键盘导致页面布局变化bug
+    let _body = document.getElementsByTagName("body")[0];
+    _body.style.height = _body.clientHeight + "px";
     window.addEventListener("resize", () => {
       this.getscale();
       this.getImgHeight();
-      // let nowHeight = document.documentElement.clientHeight;
-      // if (winHeight - nowHeight > 50) {
-      //   this.winHeight = nowHeight;
-      // } else {
-      //   this.winHeight = "100%";
-      // }
     });
   },
   data() {
@@ -68,22 +74,42 @@ export default {
       rate: true, //为true时，高度100%，false：宽度100%
       imgHeight: 0,
       editStyle: "",
-      testHeight: 0,
-      winHeight: "100%",
+      isShare: false, //为true时代表该界面是收件人见面，首页显示名字而不是输入框
+      wxinfo: [],
     };
   },
   methods: {
-    // input焦点等于是键盘弹出
-    focusInp() {
-      this.userName = document.documentElement.clientHeight;
-      return true;
+    // 获得微信要分享需要的东西
+    getWXInfo() {
+      this.$api
+        .getWxInfo({
+          action: "getWXJSsignature",
+          parameter: {
+            configkey: 5,
+            url: window.location.href.replace("\/#", ""), //("\/#", "")要写这样的，不然会出错
+          },
+        })
+        .then((res) => {
+          console.log(res);
+          if (res.errcode != 0) {
+            alert("界面出现错误不允许分享，可刷新重试");
+            return;
+          }
+          this.wxinfo = res.data;
+        })
+        .catch((err) => {
+          alert("接口出现错误！");
+          console.log(err);
+        });
     },
-    // input失去焦点
-    blurInp() {
-      this.getscale();
-      this.getImgHeight();
+    // 获得url中的收件人名字
+    getUrlString(key) {
+      // 获取参数
+      let url = window.location.search; // 正则筛选地址栏
+      let reg = new RegExp("(^|&)" + key + "=([^&]*)(&|$)"); // 匹配目标参数
+      let result = url.substr(1).match(reg); // 返回参数值
+      return result ? decodeURIComponent(result[2]) : null;
     },
-
     // 去地图界面
     goMap() {
       let url =
@@ -118,21 +144,9 @@ export default {
     getImgHeight() {
       let _this = this;
       this.$refs.homePage.onload = function () {
-        // console.log("宽度：" + this.width + "高度：" + this.height);
         _this.editStyle =
           "width:" + `${this.width}` + "px;height:" + `${this.height}` + "px";
       };
-      this.$nextTick(() => {
-        // this.editStyle =
-        //   "width:" +
-        //   `${this.$refs.homePage.offsetWidth}` +
-        //   "px;height:" +
-        //   `${this.$refs.homePage.clientHeight}` +
-        //   "px";
-        // console.log(this.$refs.homePage.naturalHeight);
-        // console.log(this.$refs.homePage.offSetheight);
-        // console.log(this.$refs.homePage.clientHeight);
-      });
     },
     // 生成请帖按钮
     sure() {
@@ -140,7 +154,41 @@ export default {
         alert("请输入宾客名字再生成请帖！");
         return;
       }
-      alert(this.userName);
+      if (this.userName.replace(/[^\x00-\xff]/g, "00").length > 14) {
+        alert("名字长度限制7位！");
+        return;
+      }
+      wx.config({
+        debug: false, // 开启调试模式,调用的所有api的返回值会在客户端alert出来，若要查看传入的参数，可以在pc端打开，参数信息会通过log打出，仅在pc端时才会打印。
+        appId: this.wxinfo[0], // 必填，公众号的唯一标识，填自己的！
+        timestamp: this.wxinfo[1], // 必填，生成签名的时间戳，刚才接口拿到的数据
+        nonceStr: this.wxinfo[2], // 必填，生成签名的随机串
+        signature: this.wxinfo[3], // 必填，签名，见附录1
+        jsApiList: [
+          "checkJsApi",
+          "onMenuShareTimeline",
+          "onMenuShareAppMessage",
+          "showMenuItems",
+          "updateAppMessageShareData",
+        ], // 必填，需要使用的JS接口列表。
+      });
+      wx.ready(() => {
+        //需在用户可能点击分享按钮前就先调用
+        wx.updateAppMessageShareData({
+          title: "这是分享名称", // 分享标题
+          desc: `2021年7月9日\r\n利郎总部创意园六号楼\r\n福建晋江市长兴路200号`, // 分享描述
+          link: window.location.href.replace("/#", "") + "?userName="+this.userName, // 分享链接，该链接域名或路径必须与当前页面对应的公众号JS安全域名一致
+          imgUrl:
+            "http://tm.lilanz.com/QYWX/Test/LMTest/assets/img/celebration/share.jpg", // 分享图标
+          success: function () {
+            alert("生成请帖成功，请点击分享发送给朋友！");
+          },
+        });
+        wx.error(function (res) {
+          // config信息验证失败会执行error函数
+          console.log(res);
+        });
+      });
     },
   },
 };
@@ -152,6 +200,7 @@ export default {
     Microsoft YaHei, 微软雅黑;
   max-width: 540px;
   height: 100%;
+  min-height: 100vh;
   width: 100%;
   margin: auto;
   background-color: #c11a20;
@@ -190,10 +239,10 @@ export default {
     right: 0;
     margin: 0 auto;
     overflow-y: scroll;
-    .inp_edit {
+    .inp_edit,
+    .name_edit {
       position: absolute;
       top: 58%;
-      // top: 0;
       left: 0;
       right: 0;
       width: 65%;
@@ -204,6 +253,16 @@ export default {
         font-weight: bold;
         color: #ffdd89;
         text-align: left;
+      }
+      .text_right {
+        text-align: right;
+      }
+      h2 {
+        color: #ffdd89;
+        font-weight: bold;
+        font-size: 36px;
+        height: 100px;
+        line-height: 100px;
       }
       input[type="text"] {
         text-align: center;
